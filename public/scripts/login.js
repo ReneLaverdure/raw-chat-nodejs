@@ -14,7 +14,8 @@ form.addEventListener("submit", async (e) => {
   });
   const result = await response.json();
   console.log(result);
-  localStorage.setItem("userID", result.id);
+  localStorage.setItem("userId", result.id);
+  localStorage.setItem("username", result.username);
   if (result.id) {
     window.location.href = "http://localhost:3000/";
   }

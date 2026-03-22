@@ -11,15 +11,12 @@
     <a href="login.html">login</a>
     <div>
       <h4>Our chat rooms</h4>
-      <div>
-        <a href="chatrooms/123">chat room 1</a>
-      </div>
-      <div>
-        <a href="chatrooms/2">chat room 2</a>
-      </div>
-      <div>
-        <a href="chatrooms/3">chat room 3</a>
-      </div>
+      <div id="roomList"></div>
+      <div id="chatroom-messages"></div>
+      <form id="messageForm" method="POST">
+        <input type="text" name="message" value="" />
+        <button type="submit">submit</button>
+      </form>
     </div>
 
     <script src="./scripts/main.js" type="module"></script>
