@@ -3,9 +3,17 @@ const BASEURL = "http://localhost:3000/api";
 const roomList = document.querySelector("#roomList");
 const chatroomMessages = document.querySelector("#chatroom-messages");
 const messageForm = document.querySelector("#messageForm");
+const errorText = document.querySelector(".error");
+const logout = document.querySelector("#logout");
 
 let currentRoom = undefined;
-
+function displayError(errorMessage, element) {
+  element.textContent = errorMessage;
+  element.classList.add("display");
+  setTimeout(() => {
+    element.classList.remove("display");
+  }, 3000);
+}
 async function getAuth() {
   let response = await fetch(BASEURL + "/auth");
   let data = await response.json();
@@ -30,10 +38,23 @@ async function getAllRoomId() {
   return data;
 }
 
+logout.addEventListener("click", async (e) => {
+  e.preventDefault();
+  const response = await fetch(BASEURL + "/auth", {
+    method: "DELETE",
+  });
+  const data = await response.json();
+  if (data.success) {
+    window.location.href = "/login";
+  }
+});
+
 const data = await getAuth();
 const room = await getAllRoomId();
 console.log(room);
 console.log(data);
+
+let currentEventSource = undefined;
 
 const chatroomButtons = document.querySelectorAll(".chatroom-button");
 for (const button of chatroomButtons) {
@@ -42,23 +63,37 @@ for (const button of chatroomButtons) {
     chatroomMessages.innerHTML = "";
     const roomId = e.target.id;
     currentRoom = roomId;
-    const response = await fetch(BASEURL + "/messages" + "/" + roomId);
-    const data = await response.json();
-    console.log(data);
-    displayMessages(data.messages);
+    try {
+      const response = await fetch(BASEURL + "/messages" + "/" + roomId);
+      const data = await response.json();
+      if (!response.ok) {
+        displayError(data.msg, errorText);
+        return;
+      }
 
-    const eventSource = new EventSource(
-      `${BASEURL}/messages/${roomId}/events?userId=${localStorage.getItem("userId")}`,
-    );
-    eventSource.onmessage = (e) => {
-      console.log(e);
-      const data = JSON.parse(e.data);
-      const msgDiv = document.createElement("div");
-      const p = document.createElement("p");
-      p.textContent = data.msg;
-      msgDiv.appendChild(p);
-      chatroomMessages.appendChild(msgDiv);
-    };
+      displayMessages(data.messages);
+      if (currentEventSource) {
+        currentEventSource.close();
+      }
+      currentEventSource = new EventSource(
+        `${BASEURL}/messages/${roomId}/events`,
+      );
+
+      currentEventSource.onmessage = (e) => {
+        console.log(e);
+        const messageStream = JSON.parse(e.data);
+        const msgDiv = document.createElement("div");
+        const p = document.createElement("p");
+        p.textContent = messageStream.msg;
+        msgDiv.appendChild(p);
+        chatroomMessages.appendChild(msgDiv);
+      };
+      currentEventSource.onerror = (err) => {
+        displayError(err.message, errorText);
+      };
+    } catch (err) {
+      displayError(err.message, errorText);
+    }
   });
 }
 
@@ -88,9 +123,6 @@ messageForm.addEventListener("submit", async (e) => {
     method: "POST",
     body: JSON.stringify({
       msg: message,
-      userId: localStorage.getItem("userId"),
-      timestamp: Date.now(),
-      roomId: currentRoom,
     }),
   });
   // const data = await sendingMessage.json();

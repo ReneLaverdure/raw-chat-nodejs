@@ -8,9 +8,11 @@
   </head>
   <body>
     <h1>login</h1>
-    <form method="POST">
+    <form id="loginForm" method="POST">
+      <p class="error"></p>
       <input type="text" name="username" />
       <input type="password" name="password" />
+      <p>Don't have an account? <a href="/register">Register here</a></p>
       <button type="submit">submit</button>
     </form>
     <script src="./scripts/login.js" type="module"></script>
