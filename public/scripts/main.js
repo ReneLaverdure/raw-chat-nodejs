@@ -1,5 +1,5 @@
 console.log("front end");
-const BASEURL = "http://localhost:3000/api";
+const BASEURL = "/api";
 const roomList = document.querySelector("#roomList");
 const chatroomMessages = document.querySelector("#chatroom-messages");
 const messageForm = document.querySelector("#messageForm");
