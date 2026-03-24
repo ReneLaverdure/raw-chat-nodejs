@@ -11,9 +11,61 @@ const database = new DatabaseSync(pathToDb);
 //   .prepare("SELECT * FROM users WHERE username = ?")
 //   .get(username);
 
+const PORT = process.env.PORT || 3000;
+
+// ==== database query ====
 const inputUserIntoDb = database.prepare(
   "INSERT INTO users (username, password, id) VALUES(?, ?, ?)",
 );
+const createSession = database.prepare(
+  "INSERT INTO sessions (session, expires_at, user_id) VALUES(?, ?, ?)",
+);
+
+const getUserByUsername = database.prepare(
+  "SELECT * FROM users WHERE username = ?",
+);
+
+function generateSession(userId, expires_at = Date.now() + 5 * 60 * 1000) {}
+const returnSession = database.prepare(
+  "SELECT * FROM sessions WHERE session = ?",
+);
+const getSessionByUserId = database.prepare(
+  "SELECT * FROM sessions WHERE user_id = ?",
+);
+const deleteSession = database.prepare(
+  "DELETE FROM sessions WHERE session = ?",
+);
+
+function parseCookie(cookieHeader) {
+  if (!cookieHeader) return {};
+  return Object.fromEntries(
+    cookieHeader.split(";").map((cookies) => {
+      const [key, value] = cookies.trim().split("=");
+      return [key, value];
+    }),
+  );
+}
+
+function validateSessionToken(cookieHeader) {
+  const cookies = parseCookie(cookieHeader);
+  const sessionToken = cookies.token;
+  console.log(sessionToken);
+  if (!sessionToken) {
+    return false;
+  }
+
+  const session = returnSession.get(sessionToken);
+  console.log("======on session======", session);
+  if (!session) {
+    return false;
+  }
+  if (session.expires_at < Date.now()) {
+    deleteSession.run(sessionToken);
+    return false;
+  }
+
+  return session;
+}
 
 const MIME_TYPES = {
   ".html": "text/html",
@@ -65,33 +117,103 @@ const server = http.createServer(async (req, res) => {
         }
         case "POST": {
           console.log("============ POSTING ACTION ================");
+          console.log(filePathSeg[3]);
           const chucks = [];
           let body;
-          req.on("data", (chunk) => {
-            chucks.push(chunk);
-          });
-          req.on("end", () => {
-            const buffer = Buffer.concat(chucks).toString("utf8");
-            body = JSON.parse(buffer);
-            console.log("body from requesting client", body);
-            const id = randomUUID();
-            //error handling needed username must be unique
-            inputUserIntoDb.run(body.username, body.password, id);
-            const returnUserInDb = database
-              .prepare("SELECT * FROM users WHERE username = ?")
-              .get(body.username);
-            console.log(returnUserInDb, "===== new user ==== ");
-            if (returnUserInDb) {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(
-                JSON.stringify({
-                  username: returnUserInDb.username,
-                  id: returnUserInDb.id,
-                }),
-              );
+          //login route
+          if (filePathSeg[3] === "login") {
+            console.log("login routing =====");
+
+            req.on("data", (chunk) => {
+              chucks.push(chunk);
+            });
+            req.on("end", () => {
+              const buffer = Buffer.concat(chucks).toString("utf8");
+              body = JSON.parse(buffer);
+              console.log("body from requesting client", body);
+
+              //error handling needed username must be unique
+
+              try {
+                const user = getUserByUsername.get(body.username);
+                if (!user) {
+                  res.writeHead(401, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ msg: "Invalid credentials" }));
+                  return;
+                }
+
+                if (user.password === body.password) {
+                  const isSessionDup = getSessionByUserId.get(user.id);
+                  if (isSessionDup) {
+                    console.log("===== deleting dup session =====");
+                    deleteSession.run(isSessionDup.session);
+                  }
+
+                  const session = randomUUID();
+                  const now = Date.now();
+                  const expires_at = now + 5 * 60 * 1000;
+                  createSession.run(session, expires_at, user.id);
+                  res.writeHead(200, {
+                    "Content-Type": "application/json",
+                    "Set-Cookie": `token=${session}; HttpOnly; SameSite=Secure; Max-Age=300; Path=/`,
+                  });
+                  res.end(JSON.stringify({ success: true }));
+                  return;
+                } else {
+                  res.writeHead(401, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ msg: "invalid credentials" }));
+                  return;
+                }
+              } catch (err) {
+                res.writeHead(500, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ msg: err.message }));
+              }
+            });
+          }
+
+          if (filePathSeg[3] === "register") {
+            console.log("register =======");
+            req.on("data", (chunk) => {
+              chucks.push(chunk);
+            });
+
+            req.on("end", () => {
+              const buffer = Buffer.concat(chucks).toString("utf8");
+              body = JSON.parse(buffer);
+              console.log("body from requesting client", body);
+              const userId = randomUUID();
+              const session = randomUUID();
+              const now = Date.now();
+              const expires_at = now + 5 * 60 * 1000;
+
+              //error handling needed username must be unique
+              try {
+                inputUserIntoDb.run(body.username, body.password, userId);
+                createSession.run(session, expires_at, userId);
+                res.writeHead(200, {
+                  "Content-Type": "application/json",
+                  "Set-Cookie": `token=${session}; HttpOnly; SameSite=Secure; Max-Age=300; Path=/`,
+                });
+                res.end(JSON.stringify({ success: true }));
+              } catch (err) {
+                const isDuplicate = err.message.includes(
+                  "UNIQUE constraint failed",
+                );
+                res.writeHead(isDuplicate ? 409 : 500, {
+                  "Content-Type": "application/json",
+                });
+                res.end(
+                  JSON.stringify({
+                    msg: isDuplicate
+                      ? "username already taken"
+                      : "Server error",
+                  }),
+                );
+              }
+
               return;
-            }
-          });
+            });
+          }
 
           break;
         }
@@ -99,7 +221,23 @@ const server = http.createServer(async (req, res) => {
           break;
         }
         case "DELETE": {
-          break;
+          console.log("=========== this is the delete route ======");
+          const session = validateSessionToken(req.headers.cookie);
+          if (!session) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "method not allowed" }));
+            return;
+          }
+
+          const token = session.session;
+          deleteSession.run(token);
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Set-Cookie":
+              "token=; HttpOnly; SameSite=Secure; Max-Age=0; Path=/",
+          });
+          res.end(JSON.stringify({ success: true }));
+          return;
         }
         default: {
           res.writeHead(405, { "Content-Type": "application/json" });
@@ -140,19 +278,33 @@ const server = http.createServer(async (req, res) => {
           const segments = req.url.split("/");
           const roomId = segments[3];
           console.log(segments);
+          const session = validateSessionToken(req.headers.cookie);
+          if (!session) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ msg: "session does not exist" }));
+            return;
+          }
+
           //sse listening
           //no res.end to keep the sse listening for updates
           if (req.headers["accept"] === "text/event-stream") {
             console.log("within events =====");
-            const url = new URL(req.url, "http://localhost");
-            const userId = url.searchParams.get("userId");
 
-            console.log(userId);
             const roomUsers = sseMap.get(roomId);
-            roomUsers[userId] = res;
+            if (!roomUsers) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ msg: "Room not found" }));
+              return;
+            }
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            });
+            roomUsers[session.user_id] = res;
             sseMap.set(roomId, roomUsers);
             req.on("close", () => {
-              delete roomUsers[userId];
+              delete roomUsers[session.user_id];
             });
             return;
           } else {
@@ -167,6 +319,12 @@ const server = http.createServer(async (req, res) => {
         }
         case "POST": {
           const roomId = req.url.split("/")[3];
+          const session = validateSessionToken(req.headers.cookie);
+          if (!session) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ msg: "session does not exist" }));
+            return;
+          }
           console.log("==== CREATING MESSAGES =====");
           // gather all chunks coming from stream
           const chunks = [];
@@ -183,22 +341,18 @@ const server = http.createServer(async (req, res) => {
             );
             messageInsert.run(
               body.msg,
-              body.timestamp,
-              body.userId,
-              body.roomId,
+              Date.now(),
+              session.user_id,
+              roomId,
               randomUUID(),
             );
 
             const roomUsers = sseMap.get(roomId);
             for (const users in roomUsers) {
               console.log("within the sse map updating");
-              const res = roomUsers[users];
-              res.writeHead(200, {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive",
-              });
-              res.write(`data: ${bufferMessage}\n\n`);
+              const clientRes = roomUsers[users];
+
+              clientRes.write(`data: ${bufferMessage}\n\n`);
             }
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ msg: body.msg }));
@@ -264,6 +418,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(3000, () => {
+server.listen(PORT, () => {
   console.log(`server is running on http://localhost:3000`);
 });

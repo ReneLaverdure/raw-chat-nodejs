@@ -46,7 +46,7 @@ database.exec(`
 database.exec(`
     CREATE TABLE sessions(
     session TEXT, 
-    timestamp TEXT,
+    expires_at TEXT,
     user_id TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id)
 )
